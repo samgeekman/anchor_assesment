@@ -418,6 +418,7 @@
           .q { margin-bottom: 12px; }
           .score { font-weight: bold; }
           .comment { color: #333; }
+          .footer-note { margin-top: 20px; padding-top: 10px; border-top: 1px solid #d3d9df; font-size: 12px; color: #435864; }
           hr { border: 0; border-top: 1px solid #d3d9df; margin: 18px 0; }
         </style>
       </head>
@@ -451,6 +452,7 @@
       html += "<hr/>";
     });
 
+    html += `<p class="footer-note">This scoring was carried out at <a href="https://anchors.scdc.org.uk/">anchors.scdc.org.uk</a>, a tool developed by the Scottish Community Development Centre.</p>`;
     html += "</body></html>";
     return html;
   }
@@ -495,6 +497,8 @@
       lines.push("");
     });
 
+    lines.push("This scoring was carried out at anchors.scdc.org.uk, a tool developed by the Scottish Community Development Centre.");
+    lines.push("https://anchors.scdc.org.uk/");
     return lines.join("\n");
   }
 

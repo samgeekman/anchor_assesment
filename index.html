@@ -66,27 +66,20 @@
         <div class="summary-head">
           <h2>Scoring Summary</h2>
           <button id="summaryToggle" type="button" class="summary-toggle" aria-expanded="false" aria-label="Toggle scoring summary">
-            <span class="arrow-stack up" aria-hidden="true">
-              <span>^</span>
-              <span>^</span>
-            </span>
-            <span class="arrow-stack down" aria-hidden="true">
-              <span>v</span>
-              <span>v</span>
-            </span>
+            <span class="toggle-label toggle-open">Open</span>
+            <span class="toggle-label toggle-close">Close</span>
           </button>
         </div>
-        <div id="summaryContent" class="summary-content">
-          <div class="progress-wrap" aria-live="polite">
-            <div class="progress-topline">
-              <p class="score-label">Completion Progress</p>
-              <p id="progressLabel" class="progress-label">0%</p>
-            </div>
-            <div class="progress-track">
-              <div id="progressFill" class="progress-fill" style="width: 0%"></div>
-            </div>
+        <div class="progress-wrap" aria-live="polite">
+          <div class="progress-topline">
+            <p class="score-label">Completion Progress</p>
+            <p id="progressLabel" class="progress-label">0%</p>
           </div>
-
+          <div class="progress-track">
+            <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+          </div>
+        </div>
+        <div id="summaryContent" class="summary-content">
           <div class="score-cards">
             <article>
               <p class="score-label">Questions Scored</p>
