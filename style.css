@@ -436,6 +436,10 @@ textarea {
   background: #f2f6f9;
 }
 
+.is-hidden {
+  display: none !important;
+}
+
 .result-narrative {
   margin-top: 0.95rem;
   padding: 0.8rem;

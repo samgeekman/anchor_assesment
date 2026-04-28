@@ -15,7 +15,8 @@
       metadata: { orgName: "", completedBy: "", completedDate: "" },
       answers: {},
       reflection: {}
-    }
+    },
+    reassessment: null
   };
 
   const dom = {
@@ -29,12 +30,13 @@
     averageScore: document.getElementById("averageScore"),
     percentScore: document.getElementById("percentScore"),
     resultNarrative: document.getElementById("resultNarrative"),
-    calculateBtn: document.getElementById("calculateBtn"),
     importBtn: document.getElementById("importBtn"),
+    reassessImportBtn: document.getElementById("reassessImportBtn"),
     importFileInput: document.getElementById("importFileInput"),
+    reassessFileInput: document.getElementById("reassessFileInput"),
     importStatus: document.getElementById("importStatus"),
     exportWordBtn: document.getElementById("exportWordBtn"),
-    exportPdfBtn: document.getElementById("exportPdfBtn"),
+    exportComparisonBtn: document.getElementById("exportComparisonBtn"),
     newSessionBtn: document.getElementById("newSessionBtn"),
     summaryPanel: document.getElementById("summaryPanel"),
     summaryToggle: document.getElementById("summaryToggle"),
@@ -46,11 +48,6 @@
     completedBy: document.getElementById("completedBy"),
     completedDate: document.getElementById("completedDate")
   };
-
-  if (window.pdfjsLib) {
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-  }
 
   function loadSession() {
     try {
@@ -467,6 +464,82 @@
     };
   }
 
+  function getAnswerMapForSectionFromState(sectionId) {
+    return state.session.answers[sectionId] || {};
+  }
+
+  function computeScoreFromAnswerMap(sectionId, answersMap) {
+    const section = sections.find((item) => item.id === sectionId);
+    let total = 0;
+    let count = 0;
+    section.categories.forEach((category, cIdx) => {
+      category.questions.forEach((_, qIdx) => {
+        const key = `${cIdx}-${qIdx}`;
+        const entry = answersMap[key];
+        if (entry && entry.score) {
+          total += Number(entry.score);
+          count += 1;
+        }
+      });
+    });
+    const totalQuestions = getQuestionTotal(section);
+    const max = totalQuestions * 5;
+    const avg = count ? total / count : 0;
+    const percent = max ? (total / max) * 100 : 0;
+    return { total, count, avg, percent, totalQuestions };
+  }
+
+  function buildReassessmentComparison(parsed, fileName) {
+    const targetSectionId =
+      parsed.importedSectionIds.length === 1 ? parsed.importedSectionIds[0] : state.activeSectionId;
+    const section = sections.find((item) => item.id === targetSectionId);
+    const baselineAnswers = parsed.imported.answers[targetSectionId] || {};
+    const currentAnswers = getAnswerMapForSectionFromState(targetSectionId);
+
+    let questionNumber = 0;
+    const changed = [];
+    const newlyScored = [];
+    const removed = [];
+
+    section.categories.forEach((category, cIdx) => {
+      category.questions.forEach((question, qIdx) => {
+        questionNumber += 1;
+        const key = `${cIdx}-${qIdx}`;
+        const before = baselineAnswers[key] && baselineAnswers[key].score ? Number(baselineAnswers[key].score) : null;
+        const after = currentAnswers[key] && currentAnswers[key].score ? Number(currentAnswers[key].score) : null;
+
+        if (before !== null && after !== null && before !== after) {
+          changed.push({
+            questionNumber,
+            question,
+            before,
+            after,
+            delta: after - before
+          });
+        } else if (before === null && after !== null) {
+          newlyScored.push({ questionNumber, question, after });
+        } else if (before !== null && after === null) {
+          removed.push({ questionNumber, question, before });
+        }
+      });
+    });
+
+    const baselineScore = computeScoreFromAnswerMap(targetSectionId, baselineAnswers);
+    const currentScore = computeScoreFromAnswerMap(targetSectionId, currentAnswers);
+
+    return {
+      fileName,
+      sectionId: targetSectionId,
+      sectionLabel: section.label,
+      baselineScore,
+      currentScore,
+      deltaAverage: currentScore.avg - baselineScore.avg,
+      changed,
+      newlyScored,
+      removed
+    };
+  }
+
   function setImportStatus(message, type) {
     dom.importStatus.textContent = message || "";
     if (type === "error") {
@@ -497,22 +570,6 @@
       .filter(Boolean);
   }
 
-  async function readPdfText(file) {
-    if (!window.pdfjsLib) {
-      throw new Error("PDF import is unavailable because the PDF library could not be loaded.");
-    }
-    const data = new Uint8Array(await file.arrayBuffer());
-    const pdf = await window.pdfjsLib.getDocument({ data }).promise;
-    const pageText = [];
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-      const page = await pdf.getPage(pageNumber);
-      const content = await page.getTextContent();
-      const line = content.items.map((item) => item.str).join(" ");
-      pageText.push(line);
-    }
-    return pageText.join("\n");
-  }
-
   async function readDocxText(file) {
     if (!window.mammoth) {
       throw new Error("Word import is unavailable because the DOCX library could not be loaded.");
@@ -522,7 +579,7 @@
     return result.value || "";
   }
 
-  function applyParsedImport(lines) {
+  function parseImportedLines(lines) {
     const imported = {
       metadata: {},
       answers: {},
@@ -603,7 +660,17 @@
       if (hasScores) importedSectionIdsWithScores.add(sectionId);
     });
 
-    if (!importedScoreCount) {
+    return {
+      imported,
+      importedCount: importedScoreCount,
+      importedSectionIds: Array.from(importedSectionIdsWithScores)
+    };
+  }
+
+  function applyParsedImport(lines) {
+    const { imported, importedCount, importedSectionIds } = parseImportedLines(lines);
+
+    if (!importedCount) {
       return { importedCount: 0, importedSectionIds: [] };
     }
 
@@ -632,8 +699,8 @@
     saveSession();
     applyMetadataToInputs();
     return {
-      importedCount: importedScoreCount,
-      importedSectionIds: Array.from(importedSectionIdsWithScores)
+      importedCount,
+      importedSectionIds
     };
   }
 
@@ -642,9 +709,7 @@
     const ext = fileName.includes(".") ? fileName.split(".").pop().toLowerCase() : "";
     let rawText = "";
 
-    if (ext === "pdf") {
-      rawText = await readPdfText(file);
-    } else if (ext === "docx") {
+    if (ext === "docx") {
       rawText = await readDocxText(file);
     } else {
       rawText = await file.text();
@@ -655,7 +720,7 @@
     }
 
     const lines = textToLines(rawText);
-    return applyParsedImport(lines);
+    return lines;
   }
 
   function calculateAndRenderSummary() {
@@ -733,6 +798,47 @@
       const p6 = document.createElement("p");
       p6.textContent = `Unanswered questions: ${analysis.missingNumbers.map((n) => `Q${n}`).join(", ")}.`;
       container.appendChild(p6);
+    }
+
+    if (state.reassessment && state.reassessment.sectionId === active.id) {
+      const sep = document.createElement("p");
+      sep.textContent = "Reassessment comparison:";
+      container.appendChild(sep);
+
+      const summary = document.createElement("p");
+      summary.textContent =
+        `Previous avg ${state.reassessment.baselineScore.avg.toFixed(2)} -> Current avg ${state.reassessment.currentScore.avg.toFixed(2)} ` +
+        `(delta ${state.reassessment.deltaAverage >= 0 ? "+" : ""}${state.reassessment.deltaAverage.toFixed(2)}).`;
+      container.appendChild(summary);
+
+      const details = document.createElement("ul");
+      state.reassessment.changed.slice(0, 10).forEach((item) => {
+        const li = document.createElement("li");
+        li.textContent = `Q${item.questionNumber}: ${item.before}/5 -> ${item.after}/5 (${item.delta >= 0 ? "+" : ""}${item.delta})`;
+        details.appendChild(li);
+      });
+      state.reassessment.newlyScored.slice(0, 5).forEach((item) => {
+        const li = document.createElement("li");
+        li.textContent = `Q${item.questionNumber}: newly scored ${item.after}/5`;
+        details.appendChild(li);
+      });
+      state.reassessment.removed.slice(0, 5).forEach((item) => {
+        const li = document.createElement("li");
+        li.textContent = `Q${item.questionNumber}: previously ${item.before}/5, now unanswered`;
+        details.appendChild(li);
+      });
+      if (!details.children.length) {
+        const li = document.createElement("li");
+        li.textContent = "No score differences detected.";
+        details.appendChild(li);
+      }
+      container.appendChild(details);
+    }
+
+    if (state.reassessment) {
+      dom.exportComparisonBtn.classList.remove("is-hidden");
+    } else {
+      dom.exportComparisonBtn.classList.add("is-hidden");
     }
 
     if (analysis.totalQuestions > 0 && analysis.score.count === analysis.totalQuestions) {
@@ -951,6 +1057,65 @@
     return lines.join("\n");
   }
 
+  function buildComparisonReportHtml(comparison) {
+    const orgName = dom.orgName.value.trim() || "Not provided";
+    const completedBy = dom.completedBy.value.trim() || "Not provided";
+    const completedDate = dom.completedDate.value || new Date().toISOString().slice(0, 10);
+    const delta = comparison.deltaAverage;
+    const deltaText = `${delta >= 0 ? "+" : ""}${delta.toFixed(2)}`;
+
+    const changedHtml = comparison.changed
+      .map(
+        (item) =>
+          `<li>Q${item.questionNumber}: ${item.before}/5 -> ${item.after}/5 (${item.delta >= 0 ? "+" : ""}${item.delta})</li>`
+      )
+      .join("");
+    const newHtml = comparison.newlyScored
+      .map((item) => `<li>Q${item.questionNumber}: newly scored ${item.after}/5</li>`)
+      .join("");
+    const removedHtml = comparison.removed
+      .map((item) => `<li>Q${item.questionNumber}: previously ${item.before}/5, now unanswered</li>`)
+      .join("");
+
+    return `
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Dropping Anchor Reassessment Comparison</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.4; color: #222; }
+          h1, h2, h3 { color: #2f4654; }
+          .meta { background: #f4f6f8; padding: 12px; border: 1px solid #d3d9df; margin-bottom: 14px; }
+          .footer-note { margin-top: 20px; padding-top: 10px; border-top: 1px solid #d3d9df; font-size: 12px; color: #435864; }
+        </style>
+      </head>
+      <body>
+        <h1>Reassessment Comparison</h1>
+        <div class="meta">
+          <p><strong>Organisation / Group:</strong> ${escapeHtml(orgName)}</p>
+          <p><strong>Completed by:</strong> ${escapeHtml(completedBy)}</p>
+          <p><strong>Date:</strong> ${escapeHtml(completedDate)}</p>
+          <p><strong>Question set:</strong> ${escapeHtml(comparison.sectionLabel)}</p>
+          <p><strong>Imported baseline file:</strong> ${escapeHtml(comparison.fileName)}</p>
+        </div>
+        <h2>Score Shift</h2>
+        <p><strong>Previous average:</strong> ${comparison.baselineScore.avg.toFixed(2)}</p>
+        <p><strong>Current average:</strong> ${comparison.currentScore.avg.toFixed(2)}</p>
+        <p><strong>Average delta:</strong> ${deltaText}</p>
+        <p><strong>Previous completion:</strong> ${comparison.baselineScore.count}/${comparison.baselineScore.totalQuestions}</p>
+        <p><strong>Current completion:</strong> ${comparison.currentScore.count}/${comparison.currentScore.totalQuestions}</p>
+        <h2>Changed Scores</h2>
+        <ul>${changedHtml || "<li>No changed scores</li>"}</ul>
+        <h2>Newly Scored</h2>
+        <ul>${newHtml || "<li>None</li>"}</ul>
+        <h2>Now Unanswered</h2>
+        <ul>${removedHtml || "<li>None</li>"}</ul>
+        <p class="footer-note">This scoring was carried out at <a href="https://anchors.scdc.org.uk/">anchors.scdc.org.uk</a>, a tool developed by the Scottish Community Development Centre.</p>
+      </body>
+      </html>
+    `;
+  }
+
   function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -972,30 +1137,14 @@
     downloadBlob(blob, `dropping-anchor-${sectionSlug}-${new Date().toISOString().slice(0, 10)}.doc`);
   }
 
-  function exportPdf() {
-    const active = getActiveSection();
-    const text = buildReportPlainText([active.id]);
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF({ unit: "pt", format: "a4" });
-
-    const margin = 40;
-    const maxWidth = 515;
-    const lines = pdf.splitTextToSize(text, maxWidth);
-
-    let y = margin;
-    const pageHeight = pdf.internal.pageSize.getHeight();
-
-    lines.forEach((line) => {
-      if (y > pageHeight - margin) {
-        pdf.addPage();
-        y = margin;
-      }
-      pdf.text(line, margin, y);
-      y += 14;
+  function exportComparisonWord() {
+    if (!state.reassessment) return;
+    const html = buildComparisonReportHtml(state.reassessment);
+    const blob = new Blob(["\ufeff", html], {
+      type: "application/msword"
     });
-
-    const sectionSlug = hashForSectionId(active.id);
-    pdf.save(`dropping-anchor-${sectionSlug}-${new Date().toISOString().slice(0, 10)}.pdf`);
+    const sectionSlug = hashForSectionId(state.reassessment.sectionId);
+    downloadBlob(blob, `dropping-anchor-comparison-${sectionSlug}-${new Date().toISOString().slice(0, 10)}.doc`);
   }
 
   function render() {
@@ -1011,12 +1160,14 @@
     setSummaryCollapsed(state.summaryCollapsed);
   }
 
-  dom.calculateBtn.addEventListener("click", calculateAndRenderSummary);
   dom.importBtn.addEventListener("click", () => {
     dom.importFileInput.click();
   });
+  dom.reassessImportBtn.addEventListener("click", () => {
+    dom.reassessFileInput.click();
+  });
   dom.exportWordBtn.addEventListener("click", exportWord);
-  dom.exportPdfBtn.addEventListener("click", exportPdf);
+  dom.exportComparisonBtn.addEventListener("click", exportComparisonWord);
   dom.summaryToggle.addEventListener("click", () => {
     setSummaryCollapsed(!state.summaryCollapsed);
   });
@@ -1071,6 +1222,7 @@
       answers: {},
       reflection: {}
     };
+    state.reassessment = null;
     syncUrlHashToActiveSection();
     applyMetadataToInputs();
     render();
@@ -1082,13 +1234,15 @@
     if (!file) return;
     setImportStatus(`Importing ${file.name}...`);
     try {
-      const result = await importFromSelectedFile(file);
+      const lines = await importFromSelectedFile(file);
+      const result = applyParsedImport(lines);
       if (!result.importedCount) {
         setImportStatus(
-          "No answers were detected. Import works with reports exported from this tool (.doc, .docx, .pdf).",
+          "No answers were detected. Import works with reports exported from this tool (.doc, .docx).",
           "error"
         );
       } else {
+        state.reassessment = null;
         if (result.importedSectionIds.length === 1) {
           const [importedSectionId] = result.importedSectionIds;
           if (importedSectionId && importedSectionId !== state.activeSectionId) {
@@ -1104,6 +1258,38 @@
       setImportStatus(`Import failed: ${error.message || "Unable to read file."}`, "error");
     } finally {
       dom.importFileInput.value = "";
+    }
+  });
+
+  dom.reassessFileInput.addEventListener("change", async (event) => {
+    const [file] = event.target.files || [];
+    if (!file) return;
+    setImportStatus(`Importing ${file.name} for reassessment...`);
+    try {
+      const lines = await importFromSelectedFile(file);
+      const parsed = parseImportedLines(lines);
+      if (!parsed.importedCount) {
+        setImportStatus(
+          "No baseline answers were detected for reassessment. Use a Word export from this tool.",
+          "error"
+        );
+      } else {
+        state.reassessment = buildReassessmentComparison(parsed, file.name);
+        if (state.reassessment.sectionId !== state.activeSectionId) {
+          state.activeSectionId = state.reassessment.sectionId;
+        }
+        saveSession();
+        render();
+        syncUrlHashToActiveSection();
+        setImportStatus(
+          `Reassessment loaded from ${file.name}. Comparison ready for ${state.reassessment.sectionLabel}.`,
+          "success"
+        );
+      }
+    } catch (error) {
+      setImportStatus(`Reassessment import failed: ${error.message || "Unable to read file."}`, "error");
+    } finally {
+      dom.reassessFileInput.value = "";
     }
   });
 
