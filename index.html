@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dropping Anchor Self-Assessment</title>
+    <meta
+      name="description"
+      content="SCDC Dropping Anchor self-assessment for strengths/challenges and support needs."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-shell">
+        <div class="header-copy">
+          <h1>Dropping Anchor Self-Assessment</h1>
+          <p id="subtitle" class="subtitle"></p>
+        </div>
+        <img src="./assets/scdc-logo.jpg" alt="SCDC logo" class="brand-logo" />
+      </div>
+    </header>
+
+    <main class="main-shell">
+      <section class="panel metadata-panel">
+        <div class="meta-head">
+          <h2>Assessment Details</h2>
+          <button id="newSessionBtn" type="button" class="btn danger">New session</button>
+        </div>
+        <div class="meta-grid">
+          <label>
+            Organisation / Group
+            <input id="orgName" type="text" placeholder="Enter organisation name" />
+          </label>
+          <label>
+            Completed by
+            <input id="completedBy" type="text" placeholder="Your name" />
+          </label>
+          <label>
+            Date
+            <input id="completedDate" type="date" />
+          </label>
+        </div>
+      </section>
+
+      <section class="panel nav-panel">
+        <p class="tabs-label">Select your question set</p>
+        <div id="sectionTabs" class="section-tabs" role="tablist" aria-label="Assessment sections"></div>
+      </section>
+
+      <section class="panel scale-panel">
+        <h2 id="sectionTitle"></h2>
+        <p id="sectionInstructions" class="section-intro"></p>
+        <div id="scaleLegend" class="scale-legend"></div>
+      </section>
+
+      <section id="questionsContainer" class="questions-wrap"></section>
+
+      <section id="summaryPanel" class="panel summary-panel collapsed">
+        <div class="summary-head">
+          <h2>Scoring Summary</h2>
+          <button id="summaryToggle" type="button" class="summary-toggle" aria-expanded="false" aria-label="Toggle scoring summary">
+            <span class="arrow-stack up" aria-hidden="true">
+              <span>^</span>
+              <span>^</span>
+            </span>
+            <span class="arrow-stack down" aria-hidden="true">
+              <span>v</span>
+              <span>v</span>
+            </span>
+          </button>
+        </div>
+        <div id="summaryContent" class="summary-content">
+          <div class="progress-wrap" aria-live="polite">
+            <div class="progress-topline">
+              <p class="score-label">Completion Progress</p>
+              <p id="progressLabel" class="progress-label">0%</p>
+            </div>
+            <div class="progress-track">
+              <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+            </div>
+          </div>
+
+          <div class="score-cards">
+            <article>
+              <p class="score-label">Questions Scored</p>
+              <p id="scoredCount" class="score-value">0 / 0</p>
+            </article>
+            <article>
+              <p class="score-label">Average Score</p>
+              <p id="averageScore" class="score-value">0.0</p>
+            </article>
+            <article>
+              <p class="score-label">Section Score</p>
+              <p id="percentScore" class="score-value">0%</p>
+            </article>
+          </div>
+
+          <div class="actions">
+            <button id="calculateBtn" type="button" class="btn primary">Calculate Results</button>
+            <button id="exportWordBtn" type="button" class="btn">Export to Word</button>
+            <button id="exportPdfBtn" type="button" class="btn">Export to PDF</button>
+          </div>
+
+          <div id="resultNarrative" class="result-narrative" aria-live="polite"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="./data.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
