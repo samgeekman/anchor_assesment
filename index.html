@@ -31,7 +31,10 @@
       <section class="panel metadata-panel">
         <div class="meta-head">
           <h2>Assessment Details</h2>
-          <button id="newSessionBtn" type="button" class="btn danger">New session</button>
+          <div class="meta-actions">
+            <button id="importBtn" type="button" class="btn">Import Word/PDF</button>
+            <button id="newSessionBtn" type="button" class="btn">New session</button>
+          </div>
         </div>
         <div class="meta-grid">
           <label>
@@ -100,6 +103,8 @@
             <button id="exportWordBtn" type="button" class="btn">Export to Word</button>
             <button id="exportPdfBtn" type="button" class="btn">Export to PDF</button>
           </div>
+          <input id="importFileInput" type="file" accept=".pdf,.doc,.docx,.txt,.html,.htm" hidden />
+          <p id="importStatus" class="import-status" aria-live="polite"></p>
 
           <div id="resultNarrative" class="result-narrative" aria-live="polite"></div>
         </div>
@@ -107,6 +112,8 @@
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.11.0/mammoth.browser.min.js"></script>
     <script src="./data.js"></script>
     <script src="./app.js"></script>
   </body>

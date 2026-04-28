@@ -1,6 +1,13 @@
 (function () {
   const { sections, metadata } = window.ASSESSMENT_DATA;
   const STORAGE_KEY = "scdc_dropping_anchor_session_v1";
+  const SECTION_TO_HASH = {
+    strengths: "assessing",
+    support: "support"
+  };
+  const HASH_TO_SECTION = Object.fromEntries(
+    Object.entries(SECTION_TO_HASH).map(([sectionId, hash]) => [hash, sectionId])
+  );
   const state = {
     activeSectionId: sections[0].id,
     summaryCollapsed: true,
@@ -23,6 +30,9 @@
     percentScore: document.getElementById("percentScore"),
     resultNarrative: document.getElementById("resultNarrative"),
     calculateBtn: document.getElementById("calculateBtn"),
+    importBtn: document.getElementById("importBtn"),
+    importFileInput: document.getElementById("importFileInput"),
+    importStatus: document.getElementById("importStatus"),
     exportWordBtn: document.getElementById("exportWordBtn"),
     exportPdfBtn: document.getElementById("exportPdfBtn"),
     newSessionBtn: document.getElementById("newSessionBtn"),
@@ -35,6 +45,11 @@
     completedBy: document.getElementById("completedBy"),
     completedDate: document.getElementById("completedDate")
   };
+
+  if (window.pdfjsLib) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  }
 
   function loadSession() {
     try {
@@ -107,6 +122,51 @@
     }
   }
 
+  function normalizeText(value) {
+    return (value || "")
+      .toLowerCase()
+      .replace(/&/g, " and ")
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[\u201c\u201d]/g, '"')
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function buildQuestionLookup() {
+    const map = new Map();
+    sections.forEach((section) => {
+      section.categories.forEach((category, cIdx) => {
+        category.questions.forEach((question, qIdx) => {
+          map.set(normalizeText(question), {
+            sectionId: section.id,
+            categoryIndex: cIdx,
+            questionIndex: qIdx
+          });
+        });
+      });
+    });
+    return map;
+  }
+
+  const questionLookup = buildQuestionLookup();
+
+  function sectionIdFromHash(hashValue) {
+    const clean = (hashValue || "").replace(/^#/, "").trim().toLowerCase();
+    return HASH_TO_SECTION[clean] || null;
+  }
+
+  function hashForSectionId(sectionId) {
+    return SECTION_TO_HASH[sectionId] || sectionId;
+  }
+
+  function syncUrlHashToActiveSection() {
+    const target = `#${hashForSectionId(state.activeSectionId)}`;
+    if (window.location.hash !== target) {
+      window.history.replaceState(null, "", target);
+    }
+  }
+
   function getActiveSection() {
     return sections.find((section) => section.id === state.activeSectionId);
   }
@@ -123,6 +183,7 @@
       btn.addEventListener("click", () => {
         state.activeSectionId = section.id;
         saveSession();
+        syncUrlHashToActiveSection();
         render();
       });
       dom.sectionTabs.appendChild(btn);
@@ -256,7 +317,6 @@
 
     section.categories.forEach((category, cIdx) => {
       category.questions.forEach((_, qIdx) => {
-        const name = `${sectionId}-${cIdx}-${qIdx}-score`;
         const savedAnswer = getStoredAnswer(sectionId, cIdx, qIdx);
         if (savedAnswer.score) {
           count += 1;
@@ -297,12 +357,11 @@
 
     section.categories.forEach((category, cIdx) => {
       category.questions.forEach((question, qIdx) => {
-        const name = `${sectionId}-${cIdx}-${qIdx}-score`;
-        const selected = document.querySelector(`input[name="${name}"]:checked`);
-        if (selected) {
+        const savedAnswer = getStoredAnswer(sectionId, cIdx, qIdx);
+        if (savedAnswer.score) {
           scored.push({
             question,
-            score: Number(selected.value),
+            score: Number(savedAnswer.score),
             category: category.title
           });
         }
@@ -310,6 +369,190 @@
     });
 
     return scored.sort((a, b) => a.score - b.score).slice(0, limit);
+  }
+
+  function setImportStatus(message, type) {
+    dom.importStatus.textContent = message || "";
+    if (type === "error") {
+      dom.importStatus.style.color = "#8a2d2d";
+      return;
+    }
+    if (type === "success") {
+      dom.importStatus.style.color = "#2f5f3a";
+      return;
+    }
+    dom.importStatus.style.color = "#405462";
+  }
+
+  function stripHtmlToText(raw) {
+    const htmlWithBreaks = raw
+      .replace(/<\s*br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|h1|h2|h3|h4|h5|h6|li|tr|section|article)>/gi, "$&\n");
+    const doc = new DOMParser().parseFromString(htmlWithBreaks, "text/html");
+    return (doc.body ? doc.body.textContent : htmlWithBreaks) || "";
+  }
+
+  function textToLines(text) {
+    return text
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
+  async function readPdfText(file) {
+    if (!window.pdfjsLib) {
+      throw new Error("PDF import is unavailable because the PDF library could not be loaded.");
+    }
+    const data = new Uint8Array(await file.arrayBuffer());
+    const pdf = await window.pdfjsLib.getDocument({ data }).promise;
+    const pageText = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const line = content.items.map((item) => item.str).join(" ");
+      pageText.push(line);
+    }
+    return pageText.join("\n");
+  }
+
+  async function readDocxText(file) {
+    if (!window.mammoth) {
+      throw new Error("Word import is unavailable because the DOCX library could not be loaded.");
+    }
+    const arrayBuffer = await file.arrayBuffer();
+    const result = await window.mammoth.extractRawText({ arrayBuffer });
+    return result.value || "";
+  }
+
+  function applyParsedImport(lines) {
+    const imported = {
+      metadata: {},
+      answers: {},
+      reflection: {}
+    };
+
+    function ensureImportedSection(sectionId) {
+      if (!imported.answers[sectionId]) imported.answers[sectionId] = {};
+      if (!imported.reflection[sectionId]) imported.reflection[sectionId] = {};
+    }
+
+    lines.forEach((line, idx) => {
+      if (line.startsWith("Organisation / Group:")) {
+        imported.metadata.orgName = line.replace("Organisation / Group:", "").trim();
+      } else if (line.startsWith("Completed by:")) {
+        imported.metadata.completedBy = line.replace("Completed by:", "").trim();
+      } else if (line.startsWith("Date:")) {
+        imported.metadata.completedDate = line.replace("Date:", "").trim();
+      }
+
+      if (line.startsWith("Score:") || line.startsWith("Score :") || line.startsWith("Score")) {
+        const scoreMatch = line.match(/([1-5])\s*\/\s*5/);
+        const previous = lines[idx - 1] || "";
+        const questionCandidate = previous.replace(/^-+\s*/, "").trim();
+        const lookup = questionLookup.get(normalizeText(questionCandidate));
+        if (lookup && scoreMatch) {
+          ensureImportedSection(lookup.sectionId);
+          const key = `${lookup.categoryIndex}-${lookup.questionIndex}`;
+          const existing = imported.answers[lookup.sectionId][key] || {};
+          imported.answers[lookup.sectionId][key] = {
+            ...existing,
+            score: Number(scoreMatch[1])
+          };
+        }
+      }
+
+      if (line.startsWith("Comment:")) {
+        const previousScoreLine = lines[idx - 1] || "";
+        const questionLine = lines[idx - 2] || "";
+        const questionCandidate = questionLine.replace(/^-+\s*/, "").trim();
+        const lookup = questionLookup.get(normalizeText(questionCandidate));
+        const commentValue = line.replace("Comment:", "").trim();
+        if (lookup) {
+          ensureImportedSection(lookup.sectionId);
+          const key = `${lookup.categoryIndex}-${lookup.questionIndex}`;
+          const existing = imported.answers[lookup.sectionId][key] || {};
+          imported.answers[lookup.sectionId][key] = {
+            ...existing,
+            comment: commentValue === "-" ? "" : commentValue
+          };
+        } else if (previousScoreLine) {
+          // no-op, retained for readability in mixed imports
+        }
+      }
+
+      if (line.startsWith("- ")) {
+        sections.forEach((section) => {
+          section.reflection.forEach((prompt, promptIndex) => {
+            if (normalizeText(line.slice(2)) === normalizeText(prompt)) {
+              const nextLine = (lines[idx + 1] || "").trim();
+              ensureImportedSection(section.id);
+              imported.reflection[section.id][String(promptIndex)] = nextLine === "-" ? "" : nextLine;
+            }
+          });
+        });
+      }
+    });
+
+    let importedScoreCount = 0;
+    Object.values(imported.answers).forEach((sectionAnswers) => {
+      Object.values(sectionAnswers).forEach((entry) => {
+        if (entry && entry.score) importedScoreCount += 1;
+      });
+    });
+
+    if (!importedScoreCount) {
+      return { importedCount: 0 };
+    }
+
+    Object.entries(imported.answers).forEach(([sectionId, sectionAnswers]) => {
+      if (!state.session.answers[sectionId]) state.session.answers[sectionId] = {};
+      state.session.answers[sectionId] = {
+        ...state.session.answers[sectionId],
+        ...sectionAnswers
+      };
+    });
+
+    Object.entries(imported.reflection).forEach(([sectionId, reflectionValues]) => {
+      if (!state.session.reflection[sectionId]) state.session.reflection[sectionId] = {};
+      state.session.reflection[sectionId] = {
+        ...state.session.reflection[sectionId],
+        ...reflectionValues
+      };
+    });
+
+    state.session.metadata = {
+      ...state.session.metadata,
+      ...Object.fromEntries(
+        Object.entries(imported.metadata).filter(([, value]) => typeof value === "string" && value.length > 0)
+      )
+    };
+    saveSession();
+    applyMetadataToInputs();
+    render();
+    return { importedCount: importedScoreCount };
+  }
+
+  async function importFromSelectedFile(file) {
+    const fileName = file.name || "selected file";
+    const ext = fileName.includes(".") ? fileName.split(".").pop().toLowerCase() : "";
+    let rawText = "";
+
+    if (ext === "pdf") {
+      rawText = await readPdfText(file);
+    } else if (ext === "docx") {
+      rawText = await readDocxText(file);
+    } else {
+      rawText = await file.text();
+      const looksLikeHtml = /<\s*html|<\s*body|<\s*p|<\s*div/i.test(rawText);
+      if (looksLikeHtml || ext === "doc" || ext === "htm" || ext === "html") {
+        rawText = stripHtmlToText(rawText);
+      }
+    }
+
+    const lines = textToLines(rawText);
+    return applyParsedImport(lines);
   }
 
   function calculateAndRenderSummary() {
@@ -354,8 +597,6 @@
   function gatherSectionResponses(section) {
     const categories = section.categories.map((category, cIdx) => {
       const questions = category.questions.map((question, qIdx) => {
-        const name = `${section.id}-${cIdx}-${qIdx}-score`;
-        const commentId = `${section.id}-${cIdx}-${qIdx}-comment`;
         const savedAnswer = getStoredAnswer(section.id, cIdx, qIdx);
 
         return {
@@ -559,6 +800,9 @@
   }
 
   dom.calculateBtn.addEventListener("click", calculateAndRenderSummary);
+  dom.importBtn.addEventListener("click", () => {
+    dom.importFileInput.click();
+  });
   dom.exportWordBtn.addEventListener("click", exportWord);
   dom.exportPdfBtn.addEventListener("click", exportPdf);
   dom.summaryToggle.addEventListener("click", () => {
@@ -615,11 +859,47 @@
       answers: {},
       reflection: {}
     };
+    syncUrlHashToActiveSection();
     applyMetadataToInputs();
     render();
+    setImportStatus("");
+  });
+
+  dom.importFileInput.addEventListener("change", async (event) => {
+    const [file] = event.target.files || [];
+    if (!file) return;
+    setImportStatus(`Importing ${file.name}...`);
+    try {
+      const result = await importFromSelectedFile(file);
+      if (!result.importedCount) {
+        setImportStatus(
+          "No answers were detected. Import works with reports exported from this tool (.doc, .docx, .pdf).",
+          "error"
+        );
+      } else {
+        setImportStatus(`Imported ${result.importedCount} scored answers from ${file.name}.`, "success");
+      }
+    } catch (error) {
+      setImportStatus(`Import failed: ${error.message || "Unable to read file."}`, "error");
+    } finally {
+      dom.importFileInput.value = "";
+    }
   });
 
   loadSession();
+  const hashedSection = sectionIdFromHash(window.location.hash);
+  if (hashedSection) {
+    state.activeSectionId = hashedSection;
+  }
   applyMetadataToInputs();
   render();
+  syncUrlHashToActiveSection();
+
+  window.addEventListener("hashchange", () => {
+    const sectionId = sectionIdFromHash(window.location.hash);
+    if (!sectionId || sectionId === state.activeSectionId) return;
+    state.activeSectionId = sectionId;
+    saveSession();
+    render();
+  });
 })();
