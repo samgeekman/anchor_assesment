@@ -271,6 +271,33 @@ textarea {
   margin-bottom: 0;
 }
 
+.summary-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.missing-hint {
+  margin: 0;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 240ms ease, transform 240ms ease;
+  color: #5c4b1b;
+  background: #fff8e8;
+  border: 1px solid #ecd48e;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.missing-hint.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .summary-toggle {
   border: 1px solid #bcc8d1;
   background: #fff;

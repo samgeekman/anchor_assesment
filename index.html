@@ -68,10 +68,13 @@
       <section id="summaryPanel" class="panel summary-panel collapsed">
         <div class="summary-head">
           <h2>Scoring Summary</h2>
-          <button id="summaryToggle" type="button" class="summary-toggle" aria-expanded="false" aria-label="Toggle scoring summary">
-            <span class="toggle-label toggle-open">Open</span>
-            <span class="toggle-label toggle-close">Close</span>
-          </button>
+          <div class="summary-head-actions">
+            <p id="missingHint" class="missing-hint" aria-live="polite"></p>
+            <button id="summaryToggle" type="button" class="summary-toggle" aria-expanded="false" aria-label="Toggle scoring summary">
+              <span class="toggle-label toggle-open">Open</span>
+              <span class="toggle-label toggle-close">Close</span>
+            </button>
+          </div>
         </div>
         <div class="progress-wrap" aria-live="polite">
           <div class="progress-topline">
@@ -100,8 +103,8 @@
 
           <div class="actions">
             <button id="calculateBtn" type="button" class="btn primary">Calculate Results</button>
-            <button id="exportWordBtn" type="button" class="btn">Export to Word</button>
-            <button id="exportPdfBtn" type="button" class="btn">Export to PDF</button>
+            <button id="exportWordBtn" type="button" class="btn">Export This Set to Word</button>
+            <button id="exportPdfBtn" type="button" class="btn">Export This Set to PDF</button>
           </div>
           <input id="importFileInput" type="file" accept=".pdf,.doc,.docx,.txt,.html,.htm" hidden />
           <p id="importStatus" class="import-status" aria-live="polite"></p>

@@ -39,6 +39,7 @@
     summaryPanel: document.getElementById("summaryPanel"),
     summaryToggle: document.getElementById("summaryToggle"),
     summaryContent: document.getElementById("summaryContent"),
+    missingHint: document.getElementById("missingHint"),
     progressFill: document.getElementById("progressFill"),
     progressLabel: document.getElementById("progressLabel"),
     orgName: document.getElementById("orgName"),
@@ -332,6 +333,24 @@
     return { total, count, avg, percent, max };
   }
 
+  function getMissingQuestionNumbers(sectionId) {
+    const section = sections.find((item) => item.id === sectionId);
+    let runningQuestionNumber = 0;
+    const missing = [];
+
+    section.categories.forEach((category, cIdx) => {
+      category.questions.forEach((_, qIdx) => {
+        runningQuestionNumber += 1;
+        const savedAnswer = getStoredAnswer(sectionId, cIdx, qIdx);
+        if (!savedAnswer.score) {
+          missing.push(runningQuestionNumber);
+        }
+      });
+    });
+
+    return missing;
+  }
+
   function getQuestionTotal(section) {
     return section.categories.reduce((sum, c) => sum + c.questions.length, 0);
   }
@@ -351,15 +370,18 @@
     return "No scores entered yet.";
   }
 
-  function getLowestScoredItems(sectionId, limit) {
+  function getScoredQuestionItems(sectionId) {
     const section = sections.find((item) => item.id === sectionId);
     const scored = [];
+    let questionNumber = 0;
 
     section.categories.forEach((category, cIdx) => {
       category.questions.forEach((question, qIdx) => {
+        questionNumber += 1;
         const savedAnswer = getStoredAnswer(sectionId, cIdx, qIdx);
         if (savedAnswer.score) {
           scored.push({
+            questionNumber,
             question,
             score: Number(savedAnswer.score),
             category: category.title
@@ -368,7 +390,59 @@
       });
     });
 
-    return scored.sort((a, b) => a.score - b.score).slice(0, limit);
+    return scored;
+  }
+
+  function buildSectionAnalysis(sectionId) {
+    const section = sections.find((item) => item.id === sectionId);
+    const score = getScoring(sectionId);
+    const totalQuestions = getQuestionTotal(section);
+    const completionPercent = totalQuestions ? Math.round((score.count / totalQuestions) * 100) : 0;
+    const missingNumbers = getMissingQuestionNumbers(sectionId);
+    const scoredItems = getScoredQuestionItems(sectionId);
+
+    const strongest = [...scoredItems]
+      .sort((a, b) => b.score - a.score || a.questionNumber - b.questionNumber)
+      .slice(0, 4);
+    const focusAreas = [...scoredItems]
+      .sort((a, b) => a.score - b.score || a.questionNumber - b.questionNumber)
+      .slice(0, 6);
+
+    const categoryAnalysis = section.categories
+      .map((category, cIdx) => {
+        let answered = 0;
+        let total = 0;
+        category.questions.forEach((_, qIdx) => {
+          const saved = getStoredAnswer(sectionId, cIdx, qIdx);
+          if (saved.score) {
+            answered += 1;
+            total += Number(saved.score);
+          }
+        });
+        return {
+          title: category.title,
+          answered,
+          totalQuestions: category.questions.length,
+          average: answered ? total / answered : 0
+        };
+      })
+      .filter((entry) => entry.answered > 0);
+
+    const weakestCategories = [...categoryAnalysis]
+      .sort((a, b) => a.average - b.average)
+      .slice(0, 2);
+
+    return {
+      sectionLabel: section.label,
+      totalQuestions,
+      completionPercent,
+      score,
+      headline: getScoreMessage(score.avg),
+      missingNumbers,
+      strongest,
+      focusAreas,
+      weakestCategories
+    };
   }
 
   function setImportStatus(message, type) {
@@ -496,14 +570,19 @@
     });
 
     let importedScoreCount = 0;
+    const importedSectionIdsWithScores = new Set();
     Object.values(imported.answers).forEach((sectionAnswers) => {
       Object.values(sectionAnswers).forEach((entry) => {
         if (entry && entry.score) importedScoreCount += 1;
       });
     });
+    Object.entries(imported.answers).forEach(([sectionId, sectionAnswers]) => {
+      const hasScores = Object.values(sectionAnswers).some((entry) => entry && entry.score);
+      if (hasScores) importedSectionIdsWithScores.add(sectionId);
+    });
 
     if (!importedScoreCount) {
-      return { importedCount: 0 };
+      return { importedCount: 0, importedSectionIds: [] };
     }
 
     Object.entries(imported.answers).forEach(([sectionId, sectionAnswers]) => {
@@ -530,8 +609,10 @@
     };
     saveSession();
     applyMetadataToInputs();
-    render();
-    return { importedCount: importedScoreCount };
+    return {
+      importedCount: importedScoreCount,
+      importedSectionIds: Array.from(importedSectionIdsWithScores)
+    };
   }
 
   async function importFromSelectedFile(file) {
@@ -557,39 +638,82 @@
 
   function calculateAndRenderSummary() {
     const active = getActiveSection();
-    const score = getScoring(active.id);
+    const analysis = buildSectionAnalysis(active.id);
 
-    const questionTotal = getQuestionTotal(active);
-    const completionPercent = questionTotal ? Math.round((score.count / questionTotal) * 100) : 0;
-    dom.scoredCount.textContent = `${score.count} / ${questionTotal}`;
-    dom.averageScore.textContent = score.avg.toFixed(1);
-    dom.percentScore.textContent = `${Math.round(score.percent)}%`;
-    dom.progressFill.style.width = `${completionPercent}%`;
-    dom.progressLabel.textContent = `${completionPercent}%`;
+    dom.scoredCount.textContent = `${analysis.score.count} / ${analysis.totalQuestions}`;
+    dom.averageScore.textContent = analysis.score.avg.toFixed(1);
+    dom.percentScore.textContent = `${Math.round(analysis.score.percent)}%`;
+    dom.progressFill.style.width = `${analysis.completionPercent}%`;
+    dom.progressLabel.textContent = `${analysis.completionPercent}%`;
 
-    const lowest = getLowestScoredItems(active.id, 3);
+    if (analysis.missingNumbers.length > 0 && analysis.missingNumbers.length <= 3) {
+      dom.missingHint.textContent = `Left to complete ${analysis.missingNumbers.map((n) => `Q${n}`).join(", ")}`;
+      dom.missingHint.classList.add("visible");
+    } else {
+      dom.missingHint.textContent = "";
+      dom.missingHint.classList.remove("visible");
+    }
+
     const container = dom.resultNarrative;
     container.innerHTML = "";
 
     const p1 = document.createElement("p");
-    p1.textContent = getScoreMessage(score.avg);
+    p1.textContent = analysis.headline;
     container.appendChild(p1);
 
-    if (lowest.length > 0) {
-      const p2 = document.createElement("p");
-      p2.textContent = "Priority areas (lowest scored):";
-      container.appendChild(p2);
+    const p2 = document.createElement("p");
+    p2.textContent = `Completion is ${analysis.completionPercent}% with ${analysis.score.count} of ${analysis.totalQuestions} questions scored.`;
+    container.appendChild(p2);
 
-      const list = document.createElement("ul");
-      lowest.forEach((item) => {
+    if (analysis.focusAreas.length > 0) {
+      const p3 = document.createElement("p");
+      p3.textContent = "Focus areas (lowest scores):";
+      container.appendChild(p3);
+
+      const focusList = document.createElement("ul");
+      analysis.focusAreas.slice(0, 5).forEach((item) => {
         const li = document.createElement("li");
-        li.textContent = `${item.score}/5 - ${item.question}`;
-        list.appendChild(li);
+        li.textContent = `Q${item.questionNumber}: ${item.score}/5 - ${item.question}`;
+        focusList.appendChild(li);
       });
-      container.appendChild(list);
+      container.appendChild(focusList);
     }
 
-    if (questionTotal > 0 && score.count === questionTotal) {
+    if (analysis.strongest.length > 0) {
+      const p4 = document.createElement("p");
+      p4.textContent = "Current strengths:";
+      container.appendChild(p4);
+
+      const strengths = document.createElement("ul");
+      analysis.strongest.slice(0, 3).forEach((item) => {
+        const li = document.createElement("li");
+        li.textContent = `Q${item.questionNumber}: ${item.score}/5 - ${item.question}`;
+        strengths.appendChild(li);
+      });
+      container.appendChild(strengths);
+    }
+
+    if (analysis.weakestCategories.length > 0) {
+      const p5 = document.createElement("p");
+      p5.textContent = "Category focus:";
+      container.appendChild(p5);
+
+      const categories = document.createElement("ul");
+      analysis.weakestCategories.forEach((cat) => {
+        const li = document.createElement("li");
+        li.textContent = `${cat.title} (avg ${cat.average.toFixed(1)}/5 across ${cat.answered}/${cat.totalQuestions} answered)`;
+        categories.appendChild(li);
+      });
+      container.appendChild(categories);
+    }
+
+    if (analysis.missingNumbers.length > 0) {
+      const p6 = document.createElement("p");
+      p6.textContent = `Unanswered questions: ${analysis.missingNumbers.map((n) => `Q${n}`).join(", ")}.`;
+      container.appendChild(p6);
+    }
+
+    if (analysis.totalQuestions > 0 && analysis.score.count === analysis.totalQuestions) {
       setSummaryCollapsed(false);
     }
   }
@@ -627,8 +751,63 @@
     };
   }
 
+  function gatherResponsesBySectionIds(sectionIds) {
+    return sectionIds.map((sectionId) => {
+      const section = sections.find((item) => item.id === sectionId);
+      return gatherSectionResponses(section);
+    });
+  }
+
   function gatherAllResponses() {
-    return sections.map(gatherSectionResponses);
+    return gatherResponsesBySectionIds(sections.map((section) => section.id));
+  }
+
+  function appendSectionAnalysisHtml(section, htmlParts) {
+    const sectionId = sections.find((entry) => entry.label === section.sectionLabel)?.id;
+    if (!sectionId) return;
+    const analysis = buildSectionAnalysis(sectionId);
+
+    htmlParts.push("<h3>Analysis & Focus Areas</h3>");
+    htmlParts.push(
+      `<p><strong>${escapeHtml(analysis.headline)}</strong> Completion ${analysis.completionPercent}% (${analysis.score.count}/${analysis.totalQuestions}).</p>`
+    );
+    htmlParts.push("<ul>");
+    analysis.focusAreas.slice(0, 6).forEach((item) => {
+      htmlParts.push(`<li>Focus Q${item.questionNumber}: ${item.score}/5 - ${escapeHtml(item.question)}</li>`);
+    });
+    analysis.strongest.slice(0, 4).forEach((item) => {
+      htmlParts.push(`<li>Strength Q${item.questionNumber}: ${item.score}/5 - ${escapeHtml(item.question)}</li>`);
+    });
+    analysis.weakestCategories.forEach((cat) => {
+      htmlParts.push(`<li>Category focus: ${escapeHtml(cat.title)} (avg ${cat.average.toFixed(1)}/5)</li>`);
+    });
+    if (analysis.missingNumbers.length > 0) {
+      htmlParts.push(`<li>Unanswered: ${escapeHtml(analysis.missingNumbers.map((n) => `Q${n}`).join(", "))}</li>`);
+    }
+    htmlParts.push("</ul>");
+  }
+
+  function appendSectionAnalysisText(section, lines) {
+    const sectionId = sections.find((entry) => entry.label === section.sectionLabel)?.id;
+    if (!sectionId) return;
+    const analysis = buildSectionAnalysis(sectionId);
+
+    lines.push("Analysis & Focus Areas");
+    lines.push(analysis.headline);
+    lines.push(`Completion: ${analysis.completionPercent}% (${analysis.score.count}/${analysis.totalQuestions})`);
+    analysis.focusAreas.slice(0, 6).forEach((item) => {
+      lines.push(`- Focus Q${item.questionNumber}: ${item.score}/5 - ${item.question}`);
+    });
+    analysis.strongest.slice(0, 4).forEach((item) => {
+      lines.push(`- Strength Q${item.questionNumber}: ${item.score}/5 - ${item.question}`);
+    });
+    analysis.weakestCategories.forEach((cat) => {
+      lines.push(`- Category focus: ${cat.title} (avg ${cat.average.toFixed(1)}/5)`);
+    });
+    if (analysis.missingNumbers.length > 0) {
+      lines.push(`- Unanswered: ${analysis.missingNumbers.map((n) => `Q${n}`).join(", ")}`);
+    }
+    lines.push("");
   }
 
   function escapeHtml(str) {
@@ -640,12 +819,12 @@
       .replace(/'/g, "&#039;");
   }
 
-  function buildReportHtml() {
+  function buildReportHtml(sectionIds) {
     const orgName = dom.orgName.value.trim() || "Not provided";
     const completedBy = dom.completedBy.value.trim() || "Not provided";
     const completedDate = dom.completedDate.value || new Date().toISOString().slice(0, 10);
 
-    const responses = gatherAllResponses();
+    const responses = gatherResponsesBySectionIds(sectionIds);
 
     let html = `
       <html>
@@ -677,6 +856,9 @@
       const totalQuestions = section.categories.reduce((sum, c) => sum + c.questions.length, 0);
       html += `<h2>${escapeHtml(section.sectionLabel)}</h2>`;
       html += `<p><strong>Scored:</strong> ${section.score.count}/${totalQuestions} | <strong>Average:</strong> ${section.score.avg.toFixed(2)} | <strong>Section Score:</strong> ${Math.round(section.score.percent)}%</p>`;
+      const sectionAnalysisParts = [];
+      appendSectionAnalysisHtml(section, sectionAnalysisParts);
+      html += sectionAnalysisParts.join("");
 
       section.categories.forEach((category) => {
         html += `<h3>${escapeHtml(category.title)}</h3>`;
@@ -698,7 +880,7 @@
     return html;
   }
 
-  function buildReportPlainText() {
+  function buildReportPlainText(sectionIds) {
     const orgName = dom.orgName.value.trim() || "Not provided";
     const completedBy = dom.completedBy.value.trim() || "Not provided";
     const completedDate = dom.completedDate.value || new Date().toISOString().slice(0, 10);
@@ -712,11 +894,12 @@
     lines.push(`Date: ${completedDate}`);
     lines.push("");
 
-    gatherAllResponses().forEach((section) => {
+    gatherResponsesBySectionIds(sectionIds).forEach((section) => {
       const totalQuestions = section.categories.reduce((sum, c) => sum + c.questions.length, 0);
       lines.push(section.sectionLabel);
       lines.push(`Scored: ${section.score.count}/${totalQuestions} | Average: ${section.score.avg.toFixed(2)} | Section Score: ${Math.round(section.score.percent)}%`);
       lines.push("");
+      appendSectionAnalysisText(section, lines);
 
       section.categories.forEach((category) => {
         lines.push(category.title);
@@ -755,15 +938,18 @@
   }
 
   function exportWord() {
-    const html = buildReportHtml();
+    const active = getActiveSection();
+    const html = buildReportHtml([active.id]);
     const blob = new Blob(["\ufeff", html], {
       type: "application/msword"
     });
-    downloadBlob(blob, `dropping-anchor-report-${new Date().toISOString().slice(0, 10)}.doc`);
+    const sectionSlug = hashForSectionId(active.id);
+    downloadBlob(blob, `dropping-anchor-${sectionSlug}-${new Date().toISOString().slice(0, 10)}.doc`);
   }
 
   function exportPdf() {
-    const text = buildReportPlainText();
+    const active = getActiveSection();
+    const text = buildReportPlainText([active.id]);
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit: "pt", format: "a4" });
 
@@ -783,7 +969,8 @@
       y += 14;
     });
 
-    pdf.save(`dropping-anchor-report-${new Date().toISOString().slice(0, 10)}.pdf`);
+    const sectionSlug = hashForSectionId(active.id);
+    pdf.save(`dropping-anchor-${sectionSlug}-${new Date().toISOString().slice(0, 10)}.pdf`);
   }
 
   function render() {
@@ -877,6 +1064,15 @@
           "error"
         );
       } else {
+        if (result.importedSectionIds.length === 1) {
+          const [importedSectionId] = result.importedSectionIds;
+          if (importedSectionId && importedSectionId !== state.activeSectionId) {
+            state.activeSectionId = importedSectionId;
+          }
+        }
+        saveSession();
+        render();
+        syncUrlHashToActiveSection();
         setImportStatus(`Imported ${result.importedCount} scored answers from ${file.name}.`, "success");
       }
     } catch (error) {
