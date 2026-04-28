@@ -134,6 +134,24 @@
       .trim();
   }
 
+  function stripLeadingCategoryNumber(title) {
+    return (title || "").replace(/^\s*\d+\.\s*/, "").trim();
+  }
+
+  function getCategoryLetter(index) {
+    return String.fromCharCode(65 + index);
+  }
+
+  function getCategoryDisplayTitle(categoryIndex, title) {
+    return `${getCategoryLetter(categoryIndex)}. ${stripLeadingCategoryNumber(title)}`;
+  }
+
+  function stripQuestionPrefix(text) {
+    return (text || "")
+      .replace(/^\s*Q\s*\d+\s*[:.)-]?\s*/i, "")
+      .trim();
+  }
+
   function buildQuestionLookup() {
     const map = new Map();
     sections.forEach((section) => {
@@ -201,7 +219,7 @@
     });
   }
 
-  function createQuestionRow(sectionId, categoryIndex, questionIndex, questionText, scale) {
+  function createQuestionRow(sectionId, categoryIndex, questionIndex, questionNumber, questionText, scale) {
     const wrapper = document.createElement("article");
     wrapper.className = "question";
 
@@ -209,7 +227,7 @@
 
     const title = document.createElement("p");
     title.className = "q-title";
-    title.textContent = questionText;
+    title.textContent = `Q${questionNumber}. ${questionText}`;
     wrapper.appendChild(title);
 
     const options = document.createElement("div");
@@ -267,17 +285,21 @@
 
   function renderQuestions(section) {
     dom.questionsContainer.innerHTML = "";
+    let runningQuestionNumber = 0;
 
     section.categories.forEach((category, cIdx) => {
       const categoryEl = document.createElement("section");
       categoryEl.className = "category";
 
       const title = document.createElement("h3");
-      title.textContent = category.title;
+      title.textContent = getCategoryDisplayTitle(cIdx, category.title);
       categoryEl.appendChild(title);
 
       category.questions.forEach((question, qIdx) => {
-        categoryEl.appendChild(createQuestionRow(section.id, cIdx, qIdx, question, section.scale));
+        runningQuestionNumber += 1;
+        categoryEl.appendChild(
+          createQuestionRow(section.id, cIdx, qIdx, runningQuestionNumber, question, section.scale)
+        );
       });
 
       dom.questionsContainer.appendChild(categoryEl);
@@ -384,7 +406,7 @@
             questionNumber,
             question,
             score: Number(savedAnswer.score),
-            category: category.title
+            category: getCategoryDisplayTitle(cIdx, category.title)
           });
         }
       });
@@ -420,7 +442,7 @@
           }
         });
         return {
-          title: category.title,
+          title: getCategoryDisplayTitle(cIdx, category.title),
           answered,
           totalQuestions: category.questions.length,
           average: answered ? total / answered : 0
@@ -524,7 +546,7 @@
       if (line.startsWith("Score:") || line.startsWith("Score :") || line.startsWith("Score")) {
         const scoreMatch = line.match(/([1-5])\s*\/\s*5/);
         const previous = lines[idx - 1] || "";
-        const questionCandidate = previous.replace(/^-+\s*/, "").trim();
+        const questionCandidate = stripQuestionPrefix(previous.replace(/^-+\s*/, "").trim());
         const lookup = questionLookup.get(normalizeText(questionCandidate));
         if (lookup && scoreMatch) {
           ensureImportedSection(lookup.sectionId);
@@ -540,7 +562,7 @@
       if (line.startsWith("Comment:")) {
         const previousScoreLine = lines[idx - 1] || "";
         const questionLine = lines[idx - 2] || "";
-        const questionCandidate = questionLine.replace(/^-+\s*/, "").trim();
+        const questionCandidate = stripQuestionPrefix(questionLine.replace(/^-+\s*/, "").trim());
         const lookup = questionLookup.get(normalizeText(questionCandidate));
         const commentValue = line.replace("Comment:", "").trim();
         if (lookup) {
@@ -719,11 +741,14 @@
   }
 
   function gatherSectionResponses(section) {
+    let runningQuestionNumber = 0;
     const categories = section.categories.map((category, cIdx) => {
       const questions = category.questions.map((question, qIdx) => {
         const savedAnswer = getStoredAnswer(section.id, cIdx, qIdx);
+        runningQuestionNumber += 1;
 
         return {
+          questionNumber: runningQuestionNumber,
           question,
           score: savedAnswer.score ? Number(savedAnswer.score) : null,
           comment: (savedAnswer.comment || "").trim()
@@ -731,7 +756,7 @@
       });
 
       return {
-        title: category.title,
+        title: getCategoryDisplayTitle(cIdx, category.title),
         questions
       };
     });
@@ -863,7 +888,7 @@
       section.categories.forEach((category) => {
         html += `<h3>${escapeHtml(category.title)}</h3>`;
         category.questions.forEach((q) => {
-          html += `<div class="q"><p>${escapeHtml(q.question)}</p><p class="score">Score: ${q.score === null ? "Not scored" : q.score + "/5"}</p><p class="comment">Comment: ${escapeHtml(q.comment || "-")}</p></div>`;
+          html += `<div class="q"><p>${escapeHtml(`Q${q.questionNumber}. ${q.question}`)}</p><p class="score">Score: ${q.score === null ? "Not scored" : q.score + "/5"}</p><p class="comment">Comment: ${escapeHtml(q.comment || "-")}</p></div>`;
         });
       });
 
@@ -904,7 +929,7 @@
       section.categories.forEach((category) => {
         lines.push(category.title);
         category.questions.forEach((q) => {
-          lines.push(`- ${q.question}`);
+          lines.push(`- Q${q.questionNumber}. ${q.question}`);
           lines.push(`  Score: ${q.score === null ? "Not scored" : q.score + "/5"}`);
           lines.push(`  Comment: ${q.comment || "-"}`);
         });
